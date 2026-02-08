@@ -6,7 +6,7 @@ import gc
 import re
 
 # --- 1. SAYFA AYARLARI ---
-st.set_page_config(page_title="Akredite Takip Sistemi", layout="wide")
+st.set_page_config(page_title="Akredite Öğrenci Takip Sistemi", layout="wide")
 
 # --- 2. DEPOLAMA AYARI ---
 VERI_KLASORU = "Veri_Kayitlari"
@@ -87,3 +87,4 @@ if arsiv_dosyalari:
     st.write("Veriler işleniyor...") # Buraya tablo gelecek
 else:
     st.info("Görüntülenecek veri yok. Lütfen sol panelden yükleme yapın.")
+
