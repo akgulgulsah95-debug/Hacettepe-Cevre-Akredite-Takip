@@ -2,7 +2,32 @@ import streamlit as st
 import pandas as pd
 import os
 import shutil
+import gc 
 
+# Verileri Okuma Bölümü
+if arsiv_dosyalari:
+    for file_name in arsiv_dosyalari:
+        file_path = os.path.join(VERI_KLASORU, file_name)
+        try:
+            # Belleği rahatlatmak için her dosyadan önce temizlik yap
+            gc.collect() 
+            
+            if file_name == "resmi_mezun_listesi_ozel.dat":
+                # Mezun listesini daha az hafıza kullanarak oku
+                m_df = pd.read_excel(file_path, engine='openpyxl')
+                # ... (sütun işlemleri aynı kalsın)
+                del m_df # İşlem bitince değişkeni sil
+                continue
+
+            # Ders dosyalarını okurken sadece gerekli sayfaları al
+            xls = pd.ExcelFile(file_path, engine='openpyxl')
+            for sheet in xls.sheet_names:
+                df = pd.read_excel(xls, sheet_name=sheet)
+                # ... (diğer işlemler)
+                del df # Her sayfa bittiğinde tabloyu hafızadan at
+            
+        except Exception as e:
+            st.error(f"Hata: {file_name} -> {e}")
 # Sayfa Ayarları
 st.set_page_config(page_title="Akredite Takip Sistemi", layout="wide")
 
@@ -162,4 +187,5 @@ if all_data:
             cols[i].markdown(f"<div style='background-color:{clr}; color:white; padding:8px; border-radius:8px; text-align:center; font-size:12px;'>{p}</div>", unsafe_allow_html=True)
         st.progress(row['Başarı (11)'] / 11)
 else:
+
     st.info("Arşiv boş. Lütfen yönetici şifresini girerek dosyaları yükleyin.")
