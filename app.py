@@ -70,7 +70,7 @@ with st.sidebar:
         st.info("İnceleme modu. Veri girişi için şifre gereklidir.")
 
 # --- 5. ANA BAŞLIK ---
-st.title("📊 Akredite Takip ve Öğrenci Denetim Paneli")
+st.title("📊Öğrenci Takip Paneli")
 
 # --- 6. VERİ OKUMA VE BİRLEŞTİRME ---
 if arsiv_dosyalari:
@@ -172,3 +172,4 @@ if all_data:
             cols[i].markdown(f"<div style='background-color:{clr}; color:white; padding:10px; border-radius:10px; text-align:center;'>{p}</div>", unsafe_allow_html=True)
 else:
     st.info("Sistem şu an boş veya dosyalar okunamadı. Lütfen sol panelden verileri kontrol edin.")
+
