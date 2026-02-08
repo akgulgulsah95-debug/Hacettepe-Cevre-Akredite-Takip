@@ -4,12 +4,13 @@ import os
 import gc
 import re
 
-st.set_page_config(page_title="Hacettepe Çevre Akredite", layout="wide")
+# 1. SAYFA AYARLARI
+st.set_page_config(page_title="Hacettepe Çevre Akredite Takip", layout="wide")
 
 VERI_KLASORU = "Veri_Kayitlari"
 if not os.path.exists(VERI_KLASORU): os.makedirs(VERI_KLASORU)
 
-# --- TEMİZLİK FONKSİYONLARI ---
+# 2. SÜPER TEMİZLEYİCİ FONKSİYONLAR
 def id_temizle(val):
     s = str(val).strip().split('.')[0]
     return re.sub(r'\D', '', s)
@@ -18,13 +19,14 @@ def sütun_normalize(col_name):
     s = str(col_name).strip().lower().replace('ç','c').replace('ğ','g').replace('ı','i').replace('ö','o').replace('ş','s').replace('ü','u')
     return "".join(s.split())
 
-# --- SIDEBAR ---
+# 3. YÖNETİM PANELİ (SIDEBAR)
 with st.sidebar:
     st.header("🔐 Yönetim")
     sifre = st.text_input("Şifre:", type="password")
     arsiv = [f for f in os.listdir(VERI_KLASORU) if f.endswith('.xlsx')]
     
     if sifre == "akredite2026":
+        st.success("Yönetici Modu")
         y_ders = st.file_uploader("Dosya Yükle", accept_multiple_files=True, type=['xlsx'])
         if st.button("💾 Kaydet"):
             if y_ders:
@@ -34,10 +36,9 @@ with st.sidebar:
         if arsiv:
             sil = st.selectbox("Sil:", ["Seç..."] + arsiv)
             if sil != "Seç..." and st.button("🗑️ Sil"):
-                os.remove(os.path.join(VERI_KLASORU, sil))
-                st.rerun()
+                os.remove(os.path.join(VERI_KLASORU, sil)); st.rerun()
 
-# --- ANA EKRAN ---
+# 4. ANA ANALİZ MOTORU
 st.title("🎓 Öğrenci Akredite Takip Sistemi")
 
 all_dfs = []
@@ -45,14 +46,13 @@ if arsiv:
     for file in arsiv:
         try:
             xls = pd.ExcelFile(os.path.join(VERI_KLASORU, file))
-            ders_adi = file.replace(".xlsx", "")
             for sheet in xls.sheet_names:
                 df = pd.read_excel(xls, sheet_name=sheet)
                 
-                # Sütunları tanı
+                # Sütun Tespit
                 id_col = next((c for c in df.columns if 'studentnumber' in sütun_normalize(c) or 'ogrencino' in sütun_normalize(c)), None)
-                name_col = next((c for c in df.columns if 'namesurname' in sütun_normalize(c) or 'ad' in sütun_normalize(c)), None)
-                surname_col = next((c for c in df.columns if 'surname' in sütun_normalize(c)), None)
+                n_col = next((c for c in df.columns if 'namesurname' in sütun_normalize(c) or 'adsoyad' in sütun_normalize(c) or 'name' in sütun_normalize(c) or 'ad' in sütun_normalize(c)), None)
+                s_col = next((c for c in df.columns if 'surname' in sütun_normalize(c) or 'soyad' in sütun_normalize(c)), None)
                 pc_cols = [c for c in df.columns if sütun_normalize(c).startswith('pc') or sütun_normalize(c).startswith('pc')]
                 
                 if id_col and pc_cols:
@@ -60,49 +60,42 @@ if arsiv:
                     temp.rename(columns={id_col: 'ID'}, inplace=True)
                     temp['ID'] = temp['ID'].apply(id_temizle)
                     
-                    # İsim belirleme (Bulabildiğini al)
-                    if name_col and surname_col:
-                        temp['Ad Soyad'] = df[name_col].astype(str) + " " + df[surname_col].astype(str)
-                    elif name_col:
-                        temp['Ad Soyad'] = df[name_col].astype(str)
-                    else:
-                        temp['Ad Soyad'] = None
+                    # İsim Birleştirme (Çiftleme riskini burada bitiriyoruz)
+                    if n_col and s_col:
+                        temp['Ad Soyad'] = df[n_col].astype(str) + " " + df[s_col].astype(str)
+                    elif n_col:
+                        temp['Ad Soyad'] = df[n_col].astype(str)
                     
-                    # PC'leri standartlaştır (Sadece PC1, PC2... yap)
+                    # PC Standardizasyonu
                     for pc in pc_cols:
-                        clean_pc = "PC" + re.findall(r'\d+', pc)[0]
-                        temp.rename(columns={pc: clean_pc}, inplace=True)
+                        num = re.findall(r'\d+', pc)
+                        if num: temp.rename(columns={pc: f"PC{num[0]}"}, inplace=True)
                     
                     all_dfs.append(temp)
             xls.close()
         except: continue
 
 if all_dfs:
-    # --- KRİTİK BİRLEŞTİRME MANTIĞI ---
-    # Tüm verileri alt alta ekle
+    # --- 5. MÜKEMMEL BİRLEŞTİRME (GRUPLAMA) ---
     combined = pd.concat(all_dfs, ignore_index=True)
     
-    # ID'ye göre grupla. 
-    # İsim için: Boş olmayan ilk ismi al.
-    # PC'ler için: En yüksek değeri (1 varsa 1'i) al.
-    agg_rules = {'Ad Soyad': 'first'}
-    for col in combined.columns:
-        if col.startswith('PC'): agg_rules[col] = 'max'
+    # ID'ye göre grupla: İsim için ilkini al, PC'ler için en yüksek (1) değeri al
+    agg_dict = {'Ad Soyad': 'first'}
+    for c in combined.columns:
+        if c.startswith('PC'): agg_dict[c] = 'max'
     
-    final_df = combined.groupby('ID').agg(agg_rules).reset_index()
-    
-    # Boş kalan isimleri "Bilinmiyor" yap ve temizle
+    final_df = combined.groupby('ID').agg(agg_dict).reset_index()
     final_df['Ad Soyad'] = final_df['Ad Soyad'].fillna("Bilinmiyor").str.strip().str.title()
     
-    # PC Listesi (1-11 arası)
+    # Tüm PC'lerin (1-11) olduğundan emin ol
     pc_list = [f"PC{i}" for i in range(1, 12)]
-    for pc in pc_list:
-        if pc not in final_df.columns: final_df[pc] = 0
+    for p in pc_list:
+        if p not in final_df.columns: final_df[p] = 0
     
-    final_df['Toplam Başarı'] = final_df[pc_list].sum(axis=1)
+    final_df['Başarı'] = final_df[pc_list].sum(axis=1)
     
-    # Görüntüleme
-    st.dataframe(final_df[['ID', 'Ad Soyad'] + pc_list + ['Toplam Başarı']], use_container_width=True)
-    st.download_button("📥 Excel İndir", final_df.to_csv(index=False).encode('utf-8-sig'), "akredite.csv")
+    # Tabloyu Göster
+    st.dataframe(final_df[['ID', 'Ad Soyad'] + pc_list + ['Başarı']].sort_values('ID'), use_container_width=True)
+    st.download_button("📥 Raporu İndir", final_df.to_csv(index=False).encode('utf-8-sig'), "akredite.csv")
 else:
-    st.info("Henüz veri yok.")
+    st.info("Sistemde uygun veri bulunamadı. Lütfen sol panelden yükleme yapın.")
