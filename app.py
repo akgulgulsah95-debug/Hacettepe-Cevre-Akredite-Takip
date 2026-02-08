@@ -53,18 +53,24 @@ with st.sidebar:
 
 # --- 3. FONKSİYONLAR ---
 def veri_temizle(df):
-    # Sütun isimlerini normalize et (küçük harf, boşluksuz, Türkçe karakter temizliği)
     df.columns = df.columns.astype(str).str.strip().str.lower()
     df.columns = df.columns.str.replace('ç', 'c').str.replace('ğ', 'g').str.replace('ı', 'i').str.replace('ö', 'o').str.replace('ş', 's').str.replace('ü', 'u')
     return df
 
+def id_normalize(val):
+    # Numaradaki .0 kısmını siler, boşlukları atar ve her şeyi metne çevirir
+    s = str(val).strip().lower()
+    if s.endswith('.0'): s = s[:-2]
+    return s
+
 def yil_coz(ogrenci_no):
     no_str = str(ogrenci_no).strip()
     if len(no_str) >= 8:
+        # Hacettepe numara formatına göre (genelde 2. ve 3. hane yılı verir)
         return "20" + no_str[1:3]
     return "Belirsiz"
 
-# --- 4. VERİ OKUMA VE AD-SOYAD BİRLEŞTİRME ---
+# --- 4. VERİ OKUMA VE ANALİZ ---
 if arsiv_dosyalari:
     for file_name in arsiv_dosyalari:
         file_path = os.path.join(VERI_KLASORU, file_name)
@@ -74,7 +80,8 @@ if arsiv_dosyalari:
                 m_df = pd.read_excel(file_path, engine='openpyxl')
                 m_df = veri_temizle(m_df)
                 m_id_col = next((c for c in m_df.columns if 'number' in c or 'no' in c or 'numara' in c), None)
-                if m_id_col: mezun_id_listesi = m_df[m_id_col].astype(str).tolist()
+                if m_id_col: 
+                    mezun_id_listesi = m_df[m_id_col].apply(id_normalize).tolist()
                 del m_df
                 continue
 
@@ -84,19 +91,17 @@ if arsiv_dosyalari:
                 df = pd.read_excel(xls, sheet_name=sheet)
                 df = veri_temizle(df)
                 
-                # Sütun Tespiti
                 std_num_col = next((c for c in df.columns if 'number' in c or 'no' in c or 'numara' in c), None)
                 name_col = next((c for c in df.columns if 'name' in c or 'ad' in c), None)
                 surname_col = next((c for c in df.columns if 'surname' in c or 'soyad' in c), None)
                 pc_cols = [c for c in df.columns if c.startswith('pc')]
                 
                 if std_num_col and pc_cols:
-                    # Gerekli sütunları seç ve ID'yi ayarla
                     temp_df = df[[std_num_col] + pc_cols].copy()
                     temp_df.rename(columns={std_num_col: 'ID'}, inplace=True)
-                    temp_df['ID'] = temp_df['ID'].astype(str)
-                    
-                    # AD ve SOYAD BİRLEŞTİRME OPERASYONU
+                    # KRİTİK: ID Standardizasyonu
+                    temp_df['ID'] = temp_df['ID'].apply(id_normalize)
+
                     current_name_col = f'Name_{ders_adi}'
                     if name_col and surname_col:
                         temp_df[current_name_col] = df[name_col].astype(str).str.title() + " " + df[surname_col].astype(str).str.title()
@@ -105,7 +110,6 @@ if arsiv_dosyalari:
                     elif surname_col:
                         temp_df[current_name_col] = df[surname_col].astype(str).str.title()
                     
-                    # PC Sütunlarını isimlendir
                     for pc in pc_cols:
                         temp_df.rename(columns={pc: f"{pc.upper()} ({ders_adi})"}, inplace=True)
                     
@@ -116,21 +120,19 @@ if arsiv_dosyalari:
         except Exception as e:
             st.error(f"Hata: {file_name} -> {e}")
 
-# --- 5. ANA EKRAN VE ANALİZ ---
+# --- 5. BİRLEŞTİRME VE GÖRÜNÜM ---
 if all_data:
-    # Tüm verileri ID (Numara) üzerinden dış birleşim (outer join) ile birleştir
     final_df = all_data[0]
     for d in all_data[1:]:
+        # ID üzerinden birleştirme yaparak çift kayıtları engelliyoruz
         final_df = pd.merge(final_df, d, on='ID', how='outer')
     
-    # Farklı derslerden gelen isimleri harmanla (ilk bulduğunu al)
     name_cols = [c for c in final_df.columns if c.startswith('Name_')]
     if name_cols:
         final_df['Ad Soyad'] = final_df[name_cols].bfill(axis=1).iloc[:, 0]
     else:
         final_df['Ad Soyad'] = "Bilinmiyor"
     
-    # PC Başarı Analizi
     pc_list = [f"PC{i}" for i in range(1, 12)]
     consolidated = pd.DataFrame()
     consolidated['Öğrenci No'] = final_df['ID']
@@ -147,7 +149,6 @@ if all_data:
     consolidated['Resmi Durum'] = consolidated['Öğrenci No'].apply(lambda x: "🎓 MEZUN" if x in mezun_id_listesi else "📝 ÖĞRENCİ")
     consolidated['Giriş Yılı'] = consolidated['Öğrenci No'].apply(yil_coz)
 
-    # Görünüm Ayarları
     st.subheader("📊 Filtreli Takip Paneli")
     f1, f2 = st.columns(2)
     with f1: ana_filtre = st.radio("Süzgeç:", ["Hepsi", "Sadece Öğrenciler", "Sadece Mezunlar"], horizontal=True)
@@ -158,24 +159,23 @@ if all_data:
     
     with f2:
         yillar = sorted([y for y in temp_filt['Giriş Yılı'].unique() if y != "Belirsiz"])
-        yil_filtre = st.selectbox("Giriş Yılına Göre Filtrele:", ["Tüm Yıllar"] + yillar)
+        yil_filtre = st.selectbox("Giriş Yılı:", ["Tüm Yıllar"] + yillar)
 
     if yil_filtre != "Tüm Yıllar": temp_filt = temp_filt[temp_filt['Giriş Yılı'] == yil_filtre]
     
     st.dataframe(temp_filt, use_container_width=True)
     
     csv = temp_filt.to_csv(index=False).encode('utf-8-sig')
-    st.download_button(f"📥 {ana_filtre} Verisini Excel İçin İndir", csv, "akredite_rapor.csv", "text/csv")
+    st.download_button(f"📥 {ana_filtre} Verisini İndir", csv, "akredite_rapor.csv", "text/csv")
 
     st.divider()
     st.subheader("👤 Detaylı Öğrenci Karnesi")
     s_list = consolidated.apply(lambda x: f"{x['Öğrenci No']} - {x['Ad Soyad']}", axis=1).tolist()
-    secim = st.selectbox("Bir öğrenci seçerek PC karnesini görüntüleyin:", s_list)
+    secim = st.selectbox("Bir öğrenci seçin:", s_list)
     if secim:
         s_id = secim.split(" - ")[0]
         row = consolidated[consolidated['Öğrenci No'] == s_id].iloc[0]
         st.write(f"### {row['Ad Soyad']} - {row['Resmi Durum']}")
-        st.write(f"**Giriş Yılı:** {row['Giriş Yılı']} | **Toplam Sağlanan PC:** {row['Başarı (11)']}/11")
         
         cols = st.columns(11)
         for i, p in enumerate(pc_list):
@@ -183,5 +183,4 @@ if all_data:
             cols[i].markdown(f"<div style='background-color:{clr}; color:white; padding:10px; border-radius:10px; text-align:center; font-weight:bold;'>{p}</div>", unsafe_allow_html=True)
         st.progress(float(row['Başarı (11)'] / 11))
 else:
-    st.info("Sistem şu an boş. Veri yüklemek için sol panelden şifrenizle giriş yapınız.")
-
+    st.info("Sistem şu an boş. Lütfen sol panelden verilerinizi yükleyin.")
