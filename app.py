@@ -6,7 +6,7 @@ import gc
 import re
 
 # --- 1. SAYFA AYARLARI ---
-st.set_page_config(page_title="Akredite Öğrenci Takip Sistemi", layout="wide")
+st.set_page_config(page_title="Akredite Takip Sistemi", layout="wide")
 
 # --- 2. DEPOLAMA AYARI ---
 VERI_KLASORU = "Veri_Kayitlari"
@@ -79,7 +79,7 @@ arsiv_dosyalari = [f for f in os.listdir(VERI_KLASORU) if f.endswith('.xlsx') or
 # ... (Veri okuma döngüsü ve Tablo birleştirme kodun buraya gelecek)
 # (Tablo kodunu yukarıdaki yapıya entegre ettim)
 
-st.title("📊 Akredite Takip Paneli")
+st.title("📊 Akredite Öğrenci Takip Paneli")
 
 if arsiv_dosyalari:
     # Veri okuma ve birleştirme mantığı (Daha önceki hatasız versiyonun)
@@ -87,4 +87,5 @@ if arsiv_dosyalari:
     st.write("Veriler işleniyor...") # Buraya tablo gelecek
 else:
     st.info("Görüntülenecek veri yok. Lütfen sol panelden yükleme yapın.")
+
 
