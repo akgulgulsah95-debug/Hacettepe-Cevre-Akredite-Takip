@@ -1,141 +1,186 @@
 import streamlit as st
 import pandas as pd
 import os
+import shutil
 import gc
-import re
 
-# 1. SAYFA AYARLARI
-st.set_page_config(page_title="Hacettepe Çevre Akredite Takip", layout="wide")
+# Sayfa Ayarları
+st.set_page_config(page_title="Akredite Takip Sistemi", layout="wide")
 
+# --- 1. AYARLAR VE DEPOLAMA ---
 VERI_KLASORU = "Veri_Kayitlari"
-if not os.path.exists(VERI_KLASORU): os.makedirs(VERI_KLASORU)
+if not os.path.exists(VERI_KLASORU):
+    os.makedirs(VERI_KLASORU)
 
 YONETICI_SIFRESI = "akredite2026"
+all_data = []
+mezun_id_listesi = []
+arsiv_dosyalari = [f for f in os.listdir(VERI_KLASORU) if f.endswith('.xlsx') or f.endswith('.dat')]
 
-# 2. KRİTİK TEMİZLEME FONKSİYONLARI
-def id_temizle(val):
-    s = str(val).strip().split('.')[0]
-    return re.sub(r'\D', '', s)
+st.title("🎓 Akredite Takip ve Öğrenci Denetim Paneli")
+
+# --- 2. YÖNETİCİ PANELİ (SOL SİDEBAR) ---
+with st.sidebar:
+    st.header("🔐 Yönetim Paneli")
+    girilen_sifre = st.text_input("Dosya yönetimi için şifre girin:", type="password")
+    
+    if girilen_sifre == YONETICI_SIFRESI:
+        st.success("Yönetici Modu Aktif")
+        st.divider()
+        st.header("📥 Yeni Dosya Yükle")
+        yeni_dersler = st.file_uploader("Ders Dosyaları", accept_multiple_files=True, type=['xlsx'])
+        yeni_mezun = st.file_uploader("Mezun Listesi", type=['xlsx'])
+        
+        if st.button("💾 Kaydet ve Arşivle"):
+            if yeni_dersler:
+                for f in yeni_dersler:
+                    with open(os.path.join(VERI_KLASORU, f.name), "wb") as buffer:
+                        shutil.copyfileobj(f, buffer)
+            if yeni_mezun:
+                with open(os.path.join(VERI_KLASORU, "resmi_mezun_listesi_ozel.dat"), "wb") as buffer:
+                    shutil.copyfileobj(yeni_mezun, buffer)
+            st.rerun()
+
+        st.divider()
+        st.header("📂 Arşiv Yönetimi")
+        if arsiv_dosyalari:
+            silinecek = st.selectbox("Dosya Sil:", ["Seçiniz..."] + arsiv_dosyalari)
+            if silinecek != "Seçiniz..." and st.button(f"🗑️ Sil: {silinecek}"):
+                os.remove(os.path.join(VERI_KLASORU, silinecek))
+                st.rerun()
+    else:
+        st.info("Hocalar için sadece görüntüleme modu aktif.")
+
+# --- 3. FONKSİYONLAR ---
+def veri_temizle(df):
+    # Sütun isimlerini normalize et (küçük harf, boşluksuz, Türkçe karakter temizliği)
+    df.columns = df.columns.astype(str).str.strip().str.lower()
+    df.columns = df.columns.str.replace('ç', 'c').str.replace('ğ', 'g').str.replace('ı', 'i').str.replace('ö', 'o').str.replace('ş', 's').str.replace('ü', 'u')
+    return df
 
 def yil_coz(ogrenci_no):
     no_str = str(ogrenci_no).strip()
-    if len(no_str) >= 3:
-        # Hacettepe formatı: 219... -> 2019, 221... -> 2021
+    if len(no_str) >= 8:
         return "20" + no_str[1:3]
     return "Belirsiz"
 
-def sütun_normalize(col_name):
-    s = str(col_name).strip().lower().replace('ç','c').replace('ğ','g').replace('ı','i').replace('ö','o').replace('ş','s').replace('ü','u')
-    return "".join(s.split())
-
-# 3. YÖNETİM PANELİ (SOLDA)
-with st.sidebar:
-    st.header("🔐 Yönetim Paneli")
-    sifre = st.text_input("Şifre:", type="password")
-    arsiv_dosyalari = [f for f in os.listdir(VERI_KLASORU) if f.endswith('.xlsx')]
-    
-    if sifre == YONETICI_SIFRESI:
-        st.success("Yönetici Modu")
-        y_yukle = st.file_uploader("Excel Dosyası Yükle", accept_multiple_files=True, type=['xlsx'])
-        if st.button("💾 Kaydet ve Analiz Et"):
-            if y_yukle:
-                for f in y_yukle:
-                    with open(os.path.join(VERI_KLASORU, f.name), "wb") as b: b.write(f.getvalue())
-                st.rerun()
-        if arsiv_dosyalari:
-            st.divider()
-            sil = st.selectbox("Arşivden Sil:", ["Seçiniz..."] + arsiv_dosyalari)
-            if sil != "Seçiniz..." and st.button("🗑️ DOSYAYI SİL"):
-                os.remove(os.path.join(VERI_KLASORU, sil)); st.rerun()
-    else:
-        st.info("İnceleme modu aktiftir.")
-
-# 4. ANA ANALİZ MOTORU
-st.title("🎓 Akredite Takip ve Öğrenci Denetim Paneli")
-
-all_dfs = []
-mezun_id_listesi = []
-
+# --- 4. VERİ OKUMA VE AD-SOYAD BİRLEŞTİRME ---
 if arsiv_dosyalari:
     for file_name in arsiv_dosyalari:
         file_path = os.path.join(VERI_KLASORU, file_name)
         try:
-            # Mezun Listesi Okuma
-            if "mezun" in file_name.lower():
-                m_df = pd.read_excel(file_path)
-                m_id = next((c for c in m_df.columns if 'student' in sütun_normalize(c) or 'ogrenci' in sütun_normalize(c)), None)
-                if m_id: mezun_id_listesi.extend(m_df[m_id].apply(id_temizle).tolist())
+            gc.collect()
+            if file_name == "resmi_mezun_listesi_ozel.dat":
+                m_df = pd.read_excel(file_path, engine='openpyxl')
+                m_df = veri_temizle(m_df)
+                m_id_col = next((c for c in m_df.columns if 'number' in c or 'no' in c or 'numara' in c), None)
+                if m_id_col: mezun_id_listesi = m_df[m_id_col].astype(str).tolist()
+                del m_df
                 continue
 
-            xls = pd.ExcelFile(file_path)
+            xls = pd.ExcelFile(file_path, engine='openpyxl')
+            ders_adi = file_name.replace(".xlsx", "")
             for sheet in xls.sheet_names:
                 df = pd.read_excel(xls, sheet_name=sheet)
+                df = veri_temizle(df)
                 
-                # TUZAKLARA DÜŞMEYEN SÜTUN TESPİTİ
-                # "Sıra no"yu atlayıp gerçek öğrenci numarasını bulur
-                id_col = next((c for c in df.columns if ('student' in sütun_normalize(c) or 'ogrenci' in sütun_normalize(c)) and 'no' in sütun_normalize(c)), None)
-                if not id_col: id_col = next((c for c in df.columns if 'number' in sütun_normalize(c) or 'numara' in sütun_normalize(c)), None)
+                # Sütun Tespiti
+                std_num_col = next((c for c in df.columns if 'number' in c or 'no' in c or 'numara' in c), None)
+                name_col = next((c for c in df.columns if 'name' in c or 'ad' in c), None)
+                surname_col = next((c for c in df.columns if 'surname' in c or 'soyad' in c), None)
+                pc_cols = [c for c in df.columns if c.startswith('pc')]
                 
-                n_col = next((c for c in df.columns if 'namesurname' in sütun_normalize(c) or 'adsoyad' in sütun_normalize(c) or 'name' in sütun_normalize(c) or 'ad' in sütun_normalize(c)), None)
-                s_col = next((c for c in df.columns if 'surname' in sütun_normalize(c) or 'soyad' in sütun_normalize(c)), None)
-                pc_cols = [c for c in df.columns if sütun_normalize(c).startswith('pc') or sütun_normalize(c).startswith('pc')]
-                
-                if id_col and pc_cols:
-                    temp = df[[id_col] + pc_cols].copy()
-                    temp.rename(columns={id_col: 'ID'}, inplace=True)
-                    temp['ID'] = temp['ID'].apply(id_temizle)
+                if std_num_col and pc_cols:
+                    # Gerekli sütunları seç ve ID'yi ayarla
+                    temp_df = df[[std_num_col] + pc_cols].copy()
+                    temp_df.rename(columns={std_num_col: 'ID'}, inplace=True)
+                    temp_df['ID'] = temp_df['ID'].astype(str)
                     
-                    if n_col and s_col:
-                        temp['Ad Soyad'] = df[n_col].astype(str) + " " + df[s_col].astype(str)
-                    elif n_col:
-                        temp['Ad Soyad'] = df[n_col].astype(str)
+                    # AD ve SOYAD BİRLEŞTİRME OPERASYONU
+                    current_name_col = f'Name_{ders_adi}'
+                    if name_col and surname_col:
+                        temp_df[current_name_col] = df[name_col].astype(str).str.title() + " " + df[surname_col].astype(str).str.title()
+                    elif name_col:
+                        temp_df[current_name_col] = df[name_col].astype(str).str.title()
+                    elif surname_col:
+                        temp_df[current_name_col] = df[surname_col].astype(str).str.title()
                     
+                    # PC Sütunlarını isimlendir
                     for pc in pc_cols:
-                        num = re.findall(r'\d+', pc)
-                        if num: temp.rename(columns={pc: f"PC{num[0]}"}, inplace=True)
-                    all_dfs.append(temp)
+                        temp_df.rename(columns={pc: f"{pc.upper()} ({ders_adi})"}, inplace=True)
+                    
+                    all_data.append(temp_df)
+                del df
             xls.close()
-        except: continue
+            del xls
+        except Exception as e:
+            st.error(f"Hata: {file_name} -> {e}")
 
-if all_dfs:
-    # 5. MÜKEMMEL BİRLEŞTİRME
-    combined = pd.concat(all_dfs, ignore_index=True)
+# --- 5. ANA EKRAN VE ANALİZ ---
+if all_data:
+    # Tüm verileri ID (Numara) üzerinden dış birleşim (outer join) ile birleştir
+    final_df = all_data[0]
+    for d in all_data[1:]:
+        final_df = pd.merge(final_df, d, on='ID', how='outer')
     
-    # ID'ye göre grupla ve temizle
-    agg_dict = {'Ad Soyad': 'first'}
-    for col in combined.columns:
-        if col.startswith('PC'): agg_dict[col] = 'max'
+    # Farklı derslerden gelen isimleri harmanla (ilk bulduğunu al)
+    name_cols = [c for c in final_df.columns if c.startswith('Name_')]
+    if name_cols:
+        final_df['Ad Soyad'] = final_df[name_cols].bfill(axis=1).iloc[:, 0]
+    else:
+        final_df['Ad Soyad'] = "Bilinmiyor"
     
-    final_df = combined.groupby('ID').agg(agg_dict).reset_index()
-    final_df['Ad Soyad'] = final_df['Ad Soyad'].fillna("Bilinmiyor").str.strip().str.upper()
-    
-    # Tüm filtreleri ve özellikleri geri yükle
+    # PC Başarı Analizi
     pc_list = [f"PC{i}" for i in range(1, 12)]
-    for p in pc_list:
-        if p not in final_df.columns: final_df[p] = 0
-        final_df[p] = final_df[p].fillna(0).astype(int)
-    
-    final_df['Giriş Yılı'] = final_df['ID'].apply(yil_coz)
-    final_df['Durum'] = final_df['ID'].apply(lambda x: "🎓 MEZUN" if x in mezun_id_listesi else "📝 ÖĞRENCİ")
-    final_df['Toplam Başarı'] = final_df[pc_list].sum(axis=1)
+    consolidated = pd.DataFrame()
+    consolidated['Öğrenci No'] = final_df['ID']
+    consolidated['Ad Soyad'] = final_df['Ad Soyad']
 
-    # 6. FİLTRELEME ARAYÜZÜ
-    st.subheader("📊 Akredite Takip ve Filtreleme")
-    c1, c2 = st.columns(2)
-    with c1:
-        ana_filtre = st.radio("Listele:", ["Hepsi", "Sadece Öğrenciler", "Sadece Mezunlar"], horizontal=True)
-    
-    view_df = final_df.copy()
-    if ana_filtre == "Sadece Öğrenciler": view_df = view_df[view_df['Durum'] == "📝 ÖĞRENCİ"]
-    elif ana_filtre == "Sadece Mezunlar": view_df = view_df[view_df['Durum'] == "🎓 MEZUN"]
-    
-    with c2:
-        yillar = sorted([y for y in view_df['Giriş Yılı'].unique() if y != "Belirsiz"])
-        secilen_yil = st.selectbox("Giriş Yılı Filtresi:", ["Tüm Yıllar"] + yillar)
-    
-    if secilen_yil != "Tüm Yıllar": view_df = view_df[view_df['Giriş Yılı'] == secilen_yil]
+    for pc in pc_list:
+        relevant = [c for c in final_df.columns if c.startswith(pc)]
+        if relevant:
+            consolidated[pc] = final_df[relevant].apply(lambda row: 1 if 1 in row.values else 0, axis=1)
+        else:
+            consolidated[pc] = 0
 
-    st.dataframe(view_df[['ID', 'Ad Soyad', 'Giriş Yılı', 'Durum'] + pc_list + ['Toplam Başarı']].sort_values('ID'), use_container_width=True)
-    st.download_button("📥 Excel Olarak İndir", view_df.to_csv(index=False).encode('utf-8-sig'), "akredite_rapor.csv")
+    consolidated['Başarı (11)'] = consolidated[pc_list].sum(axis=1)
+    consolidated['Resmi Durum'] = consolidated['Öğrenci No'].apply(lambda x: "🎓 MEZUN" if x in mezun_id_listesi else "📝 ÖĞRENCİ")
+    consolidated['Giriş Yılı'] = consolidated['Öğrenci No'].apply(yil_coz)
+
+    # Görünüm Ayarları
+    st.subheader("📊 Filtreli Takip Paneli")
+    f1, f2 = st.columns(2)
+    with f1: ana_filtre = st.radio("Süzgeç:", ["Hepsi", "Sadece Öğrenciler", "Sadece Mezunlar"], horizontal=True)
+    
+    temp_filt = consolidated.copy()
+    if ana_filtre == "Sadece Öğrenciler": temp_filt = temp_filt[temp_filt['Resmi Durum'] == "📝 ÖĞRENCİ"]
+    elif ana_filtre == "Sadece Mezunlar": temp_filt = temp_filt[temp_filt['Resmi Durum'] == "🎓 MEZUN"]
+    
+    with f2:
+        yillar = sorted([y for y in temp_filt['Giriş Yılı'].unique() if y != "Belirsiz"])
+        yil_filtre = st.selectbox("Giriş Yılına Göre Filtrele:", ["Tüm Yıllar"] + yillar)
+
+    if yil_filtre != "Tüm Yıllar": temp_filt = temp_filt[temp_filt['Giriş Yılı'] == yil_filtre]
+    
+    st.dataframe(temp_filt, use_container_width=True)
+    
+    csv = temp_filt.to_csv(index=False).encode('utf-8-sig')
+    st.download_button(f"📥 {ana_filtre} Verisini Excel İçin İndir", csv, "akredite_rapor.csv", "text/csv")
+
+    st.divider()
+    st.subheader("👤 Detaylı Öğrenci Karnesi")
+    s_list = consolidated.apply(lambda x: f"{x['Öğrenci No']} - {x['Ad Soyad']}", axis=1).tolist()
+    secim = st.selectbox("Bir öğrenci seçerek PC karnesini görüntüleyin:", s_list)
+    if secim:
+        s_id = secim.split(" - ")[0]
+        row = consolidated[consolidated['Öğrenci No'] == s_id].iloc[0]
+        st.write(f"### {row['Ad Soyad']} - {row['Resmi Durum']}")
+        st.write(f"**Giriş Yılı:** {row['Giriş Yılı']} | **Toplam Sağlanan PC:** {row['Başarı (11)']}/11")
+        
+        cols = st.columns(11)
+        for i, p in enumerate(pc_list):
+            clr = "#28a745" if row[p] == 1 else "#dc3545"
+            cols[i].markdown(f"<div style='background-color:{clr}; color:white; padding:10px; border-radius:10px; text-align:center; font-weight:bold;'>{p}</div>", unsafe_allow_html=True)
+        st.progress(float(row['Başarı (11)'] / 11))
 else:
-    st.info("Lütfen sol taraftan veri yükleyin.")
+    st.info("Sistem şu an boş. Veri yüklemek için sol panelden şifrenizle giriş yapınız.")
