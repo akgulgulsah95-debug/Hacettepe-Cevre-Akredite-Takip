@@ -51,7 +51,7 @@ with st.sidebar:
                 os.remove(os.path.join(VERI_KLASORU, silinecek))
                 st.rerun()
     else:
-        st.info("Hocalar için sadece görüntüleme modu aktif.")
+        st.info("Sadece görüntüleme modu aktif.")
 
 # --- 3. FONKSİYONLAR ---
 def veri_temizle(df):
@@ -159,3 +159,4 @@ if all_data:
         st.progress(float(row['Başarı (11)'] / 11))
 else:
     st.info("Sistem şu an boş. Veri yüklemek için sol panelden şifrenizle giriş yapınız.")
+
